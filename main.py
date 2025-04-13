@@ -3,7 +3,10 @@ import os
 from dotenv import load_dotenv
 import httpx
 import random
-
+from fastapi.responses import JSONResponse
+import json
+import sqlite3
+from datetime import datetime
 load_dotenv()
 
 app = FastAPI()
@@ -92,3 +95,256 @@ async def slack_events(request: Request):
             "response_type": "ephemeral",
             "text": "Slash command processed!"
         }
+
+@app.post("/slack/retro")
+async def retro_command(request: Request):
+    form = await request.form()
+    trigger_id = form.get("trigger_id")
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/views.open",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={
+                "trigger_id": trigger_id,
+                "view": {
+                    "type": "modal",
+                    "callback_id": "retro_feedback",
+                    "title": {"type": "plain_text", "text": "RetroBot"},
+                    "submit": {"type": "plain_text", "text": "Submit"},
+                    "blocks": [
+                        {
+                            "type": "input",
+                            "block_id": "went_well",
+                            "label": {"type": "plain_text", "text": "✅ What went well?"},
+                            "element": {
+                                "type": "plain_text_input",
+                                "multiline": True,
+                                "action_id": "answer"
+                            }
+                        },
+                        {
+                            "type": "input",
+                            "block_id": "went_wrong",
+                            "label": {"type": "plain_text", "text": "❌ What didn’t go well?"},
+                            "element": {
+                                "type": "plain_text_input",
+                                "multiline": True,
+                                "action_id": "answer"
+                            }
+                        },
+                        {
+                            "type": "input",
+                            "block_id": "improvements",
+                            "label": {"type": "plain_text", "text": "💡 What can be improved?"},
+                            "element": {
+                                "type": "plain_text_input",
+                                "multiline": True,
+                                "action_id": "answer"
+                            }
+                        }
+                    ]
+                }
+            }
+        )
+    return {"response_type": "ephemeral", "text": "Launching Retro Modal..."}
+
+@app.post("/slack/interactions")
+async def slack_interactions(request: Request):
+    payload = await request.form()
+    data = json.loads(payload.get("payload"))
+
+    if data["type"] == "view_submission" and data["view"]["callback_id"] == "retro_feedback":
+        user_id = data["user"]["id"]
+        state = data["view"]["state"]["values"]
+
+        # Extract answers
+        went_well = state["went_well"]["answer"]["value"]
+        went_wrong = state["went_wrong"]["answer"]["value"]
+        improvements = state["improvements"]["answer"]["value"]
+
+        # Save to SQLite
+        conn = sqlite3.connect("retro.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                went_well TEXT,
+                went_wrong TEXT,
+                improvements TEXT
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO feedback (user_id, went_well, went_wrong, improvements)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, went_well, went_wrong, improvements))
+        conn.commit()
+        conn.close()
+
+        return JSONResponse(content={"response_action": "clear"})  # Dismiss modal
+    
+    if data["type"] == "view_submission" and data["view"]["callback_id"] == "standup_submission":
+        user_id = data["user"]["id"]
+        username = data["user"]["username"]
+        state = data["view"]["state"]["values"]
+
+        yesterday = state["yesterday"]["answer"]["value"]
+        today = state["today"]["answer"]["value"]
+        blockers = state["blockers"]["answer"]["value"]
+
+        submitted_at = datetime.now().isoformat()
+
+        conn = sqlite3.connect("standup.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS standup (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                username TEXT,
+                yesterday TEXT,
+                today TEXT,
+                blockers TEXT,
+                submitted_at TEXT
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO standup (user_id, username, yesterday, today, blockers, submitted_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user_id, username, yesterday, today, blockers, submitted_at))
+        conn.commit()
+        conn.close()
+
+        return JSONResponse(content={"response_action": "clear"})
+
+@app.post("/slack/summary")
+async def retro_summary(request: Request):
+    form = await request.form()
+    channel_id = form.get("channel_id")
+
+    # Fetch retro data
+    conn = sqlite3.connect("retro.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT went_well, went_wrong, improvements FROM feedback")
+    rows = cursor.fetchall()
+    conn.close()
+
+    # Create anonymized summary
+    if not rows:
+        return {"response_type": "ephemeral", "text": "No retro feedback found."}
+
+    def bullet_list(items):
+        return "\n".join([f"• {item.strip()}" for item in items if item.strip()])
+
+    well = bullet_list([row[0] for row in rows])
+    wrong = bullet_list([row[1] for row in rows])
+    improve = bullet_list([row[2] for row in rows])
+
+    summary = f"""📋 *Sprint Retro Summary*
+
+✅ *What went well:*
+{well or '—'}
+
+❌ *What didn’t go well:*
+{wrong or '—'}
+
+💡 *Suggestions for improvement:*
+{improve or '—'}
+"""
+
+    # Optional: Post to channel via chat.postMessage
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={
+                "Authorization": f"Bearer {SLACK_BOT_TOKEN}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "channel": channel_id,
+                "text": summary
+            }
+        )
+
+    return {"response_type": "ephemeral", "text": "🧾 Retro summary posted to channel!"}
+
+
+@app.post("/slack/standup")
+async def open_standup_modal(request: Request):
+    form = await request.form()
+    trigger_id = form.get("trigger_id")
+    user_id = form.get("user_id")
+
+    view = {
+        "type": "modal",
+        "callback_id": "standup_submission",
+        "title": {"type": "plain_text", "text": "Daily Standup"},
+        "submit": {"type": "plain_text", "text": "Submit"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "yesterday",
+                "label": {"type": "plain_text", "text": "🕙 What did you do yesterday?"},
+                "element": {"type": "plain_text_input", "action_id": "answer", "multiline": True}
+            },
+            {
+                "type": "input",
+                "block_id": "today",
+                "label": {"type": "plain_text", "text": "📅 What will you do today?"},
+                "element": {"type": "plain_text_input", "action_id": "answer", "multiline": True}
+            },
+            {
+                "type": "input",
+                "block_id": "blockers",
+                "label": {"type": "plain_text", "text": "🚧 Any blockers?"},
+                "element": {"type": "plain_text_input", "action_id": "answer", "multiline": True}
+            }
+        ]
+    }
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/views.open",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"trigger_id": trigger_id, "view": view}
+        )
+
+    return {"response_type": "ephemeral", "text": "Opening standup modal..."}
+
+@app.post("/slack/standup-summary")
+async def standup_summary(request: Request):
+    form = await request.form()
+    channel_id = form.get("channel_id")
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("standup.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT username, yesterday, today, blockers
+        FROM standup
+        WHERE DATE(submitted_at) = ?
+    """, (today,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return {"response_type": "ephemeral", "text": "No standup updates submitted today."}
+
+    summary = "*📋 Daily Standup Summary:*\n\n"
+    for username, yday, tday, block in rows:
+        summary += f"*👤 {username}*\n"
+        summary += f"> *Yesterday:* {yday.strip()}\n"
+        summary += f"> *Today:* {tday.strip()}\n"
+        summary += f"> *Blockers:* {block.strip() or 'None'}\n\n"
+
+    # Post to channel
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"channel": channel_id, "text": summary}
+        )
+
+    return {"response_type": "ephemeral", "text": "✅ Standup summary posted!"}
+
+
