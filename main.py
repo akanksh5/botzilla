@@ -287,7 +287,7 @@ async def retro_summary(request: Request):
     wrong = bullet_list([row[1] for row in rows])
     improve = bullet_list([row[2] for row in rows])
 
-    summary = f"""📋 *Sprint Retro Summary*
+    summary = f"""🚀 *Sprint Retro Summary*
 
 ✅ *What went well:*
 {well or '—'}
@@ -377,7 +377,7 @@ async def standup_summary(request: Request):
     if not rows:
         return {"response_type": "ephemeral", "text": "No standup updates submitted today."}
 
-    summary = "*📋 Daily Standup Summary:*\n\n"
+    summary = "*🚀 Daily Standup Summary:*\n\n"
     for username, yday, tday, block in rows:
         summary += f"*👤 {username}*\n"
         summary += f"> *Yesterday:* {yday.strip()}\n"
@@ -447,7 +447,7 @@ async def vibe_summary(request: Request):
     if not rows:
         return {"response_type": "ephemeral", "text": "No vibes shared today!"}
 
-    summary =  f"*\U0001F60E Vibe Check Summary ({today})*\n\n"
+    summary =  f"*🚀 Vibe Check Summary ({today})*\n\n"
     for i, (vibe,) in enumerate(rows, start=1):
         summary += f"*Entry {i}*: {vibe.strip()}\n"
 
