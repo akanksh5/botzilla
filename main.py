@@ -168,7 +168,7 @@ async def slack_interactions(request: Request):
         improvements = state["improvements"]["answer"]["value"]
 
         # Save to SQLite
-        conn = sqlite3.connect("retro.db")
+        conn = sqlite3.connect("botzilla.db")
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS feedback (
@@ -194,7 +194,7 @@ async def slack_interactions(request: Request):
         vibe = data["view"]["state"]["values"]["vibe"]["answer"]["value"]
         submitted_at = datetime.now().isoformat()
 
-        conn = sqlite3.connect("vibe.db")
+        conn = sqlite3.connect("botzilla.db")
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS vibes (
@@ -242,7 +242,7 @@ async def slack_interactions(request: Request):
 
         submitted_at = datetime.now().isoformat()
 
-        conn = sqlite3.connect("standup.db")
+        conn = sqlite3.connect("botzilla.db")
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS standup (
@@ -270,7 +270,7 @@ async def retro_summary(request: Request):
     channel_id = form.get("channel_id")
 
     # Fetch retro data
-    conn = sqlite3.connect("retro.db")
+    conn = sqlite3.connect("botzilla.db")
     cursor = conn.cursor()
     cursor.execute("SELECT went_well, went_wrong, improvements FROM feedback")
     rows = cursor.fetchall()
@@ -364,7 +364,7 @@ async def standup_summary(request: Request):
     channel_id = form.get("channel_id")
 
     today = datetime.now().strftime("%Y-%m-%d")
-    conn = sqlite3.connect("standup.db")
+    conn = sqlite3.connect("botzilla.db")
     cursor = conn.cursor()
     cursor.execute("""
         SELECT username, yesterday, today, blockers
@@ -435,7 +435,7 @@ async def vibe_summary(request: Request):
     channel_id = form.get("channel_id")
 
     today = datetime.now().strftime("%Y-%m-%d")
-    conn = sqlite3.connect("vibe.db")
+    conn = sqlite3.connect("botzilla.db")
     cursor = conn.cursor()
     cursor.execute("""
         SELECT vibe FROM vibes

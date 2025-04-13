@@ -1,6 +1,6 @@
 import sqlite3
 
-DB_FILE = "links.db"
+DB_FILE = "botzilla.db"
 
 def save_link_data(url, title, category, tags):
     conn = sqlite3.connect(DB_FILE)
