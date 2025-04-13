@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 import os
 from dotenv import load_dotenv
 import httpx
@@ -184,6 +184,49 @@ async def slack_interactions(request: Request):
 
         return JSONResponse(content={"response_action": "clear"})  # Dismiss modal
     
+    if data["type"] == "view_submission" and data["view"]["callback_id"] == "vibecheck_modal":
+        user_id = data["user"]["id"]
+        username = data["user"].get("username", "anonymous")
+        vibe = data["view"]["state"]["values"]["vibe"]["answer"]["value"]
+        submitted_at = datetime.now().isoformat()
+
+        conn = sqlite3.connect("vibe.db")
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS vibes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT,
+                username TEXT,
+                vibe TEXT,
+                submitted_at TEXT
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO vibes (user_id, username, vibe, submitted_at)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, username, vibe, submitted_at))
+        conn.commit()
+        conn.close()
+
+        if any(word in vibe.lower() for word in ["sad", "down", "tired", "depressed","low"]):
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://slack.com/api/chat.postMessage",
+                    headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+                    json={
+                        "channel": user_id,
+                        "text": (
+                            "Hey there 💕 it looks like you're having a tough day.\n"
+                            "Here are a few things that might help:\n\n"
+                            "🌿 Take a short walk in nature\n"
+                            "🎵 Try a 5-minute meditation: <https://www.youtube.com/watch?v=inpok4MKVLM>\n"
+                            "🙏 And remember, it's okay to feel this way. You're not alone."
+                        )
+                    }
+                )
+
+        return JSONResponse(content={"response_action": "clear"})
+    
     if data["type"] == "view_submission" and data["view"]["callback_id"] == "standup_submission":
         user_id = data["user"]["id"]
         username = data["user"]["username"]
@@ -347,4 +390,68 @@ async def standup_summary(request: Request):
 
     return {"response_type": "ephemeral", "text": "✅ Standup summary posted!"}
 
+# Vibe Check Slash Command
+@app.post("/slack/vibecheck")
+async def vibecheck_command(request: Request):
+    form = await request.form()
+    trigger_id = form.get("trigger_id")
 
+    view = {
+        "type": "modal",
+        "callback_id": "vibecheck_modal",
+        "title": {"type": "plain_text", "text": "Vibe Check"},
+        "submit": {"type": "plain_text", "text": "Share"},
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "vibe",
+                "label": {"type": "plain_text", "text": "How are you feeling today?"},
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "answer",
+                    "multiline": True,
+                    "placeholder": {"type": "plain_text", "text": "e.g. 🛌 Sleepy but ready!"}
+                }
+            }
+        ]
+    }
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/views.open",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"trigger_id": trigger_id, "view": view}
+        )
+
+    return {"response_type": "ephemeral", "text": "Vibe check modal launched!"}
+
+@app.post("/slack/vibesummary")
+async def vibe_summary(request: Request):
+    form = await request.form()
+    channel_id = form.get("channel_id")
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = sqlite3.connect("vibe.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT vibe FROM vibes
+        WHERE DATE(submitted_at) = ?
+    """, (today,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        return {"response_type": "ephemeral", "text": "No vibes shared today!"}
+
+    summary =  f"*\U0001F60E Vibe Check Summary ({today})*\n\n"
+    for i, (vibe,) in enumerate(rows, start=1):
+        summary += f"*Entry {i}*: {vibe.strip()}\n"
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
+            json={"channel": channel_id, "text": summary}
+        )
+
+    return Response(status_code=200)
