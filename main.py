@@ -7,7 +7,11 @@ from fastapi.responses import JSONResponse
 import json
 import sqlite3
 from datetime import datetime
+from link_parser import process_link
+from models import save_link_data, get_latest_links, get_links_by_tag
+
 load_dotenv()
+
 
 app = FastAPI()
 
@@ -455,3 +459,38 @@ async def vibe_summary(request: Request):
         )
 
     return Response(status_code=200)
+
+@app.post("/slack/linklibrarian")
+async def handle_slash_command(request: Request):
+    form = await request.form()
+    text = form.get("text", "").strip()
+    user_id = form.get("user_id")
+
+    args = text.split()
+    if not args:
+        return JSONResponse({"text": "Usage: add <url> | latest | tag <tag>"})
+
+    command = args[0].lower()
+
+    if command == "add" and len(args) > 1:
+        url = args[1]
+        title, category, tags = await process_link(url)
+        save_link_data(url, title, category, tags)
+        return JSONResponse({"text": f"✅ Added <{url}|{title}> as *{category}* with tags: `{', '.join(tags)}`"})
+
+    elif command == "latest":
+        links = get_latest_links()
+        if not links:
+            return JSONResponse({"text": "No links found!"})
+        text = "\n".join([f"<{l['url']}|{l['title']}> ({l['category']}) [{l['tags']}]" for l in links])
+        return JSONResponse({"text": f"*Latest Links:*\n{text}"})
+
+    elif command == "tag" and len(args) > 1:
+        tag = args[1]
+        links = get_links_by_tag(tag)
+        if not links:
+            return JSONResponse({"text": f"No links found with tag `{tag}`"})
+        text = "\n".join([f"<{l['url']}|{l['title']}> ({l['category']}) [{l['tags']}]" for l in links])
+        return JSONResponse({"text": f"*Links tagged `{tag}`:*\n{text}"})
+
+    return JSONResponse({"text": "Invalid command. Try: `add <url>`, `latest`, or `tag <tag>`"})
