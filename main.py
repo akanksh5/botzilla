@@ -95,10 +95,7 @@ async def slack_events(request: Request):
                 }
             )
 
-    return {
-            "response_type": "ephemeral",
-            "text": "Slash command processed!"
-        }
+    return Response(status_code=200)
 
 @app.post("/slack/retro")
 async def retro_command(request: Request):
@@ -151,7 +148,7 @@ async def retro_command(request: Request):
                 }
             }
         )
-    return {"response_type": "ephemeral", "text": "Launching Retro Modal..."}
+    return Response(status_code=200)
 
 @app.post("/slack/interactions")
 async def slack_interactions(request: Request):
@@ -356,7 +353,7 @@ async def open_standup_modal(request: Request):
             json={"trigger_id": trigger_id, "view": view}
         )
 
-    return {"response_type": "ephemeral", "text": "Opening standup modal..."}
+    return Response(status_code=200)
 
 @app.post("/slack/standup-summary")
 async def standup_summary(request: Request):
@@ -427,7 +424,7 @@ async def vibecheck_command(request: Request):
             json={"trigger_id": trigger_id, "view": view}
         )
 
-    return {"response_type": "ephemeral", "text": "Vibe check modal launched!"}
+    return Response(status_code=200)
 
 @app.post("/slack/vibesummary")
 async def vibe_summary(request: Request):
